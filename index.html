@@ -44,18 +44,18 @@
 
 		<h2>Overview</h2>
 		<p>
-			In this homework, we built a mass-spring cloth simulator and wrote GLSL shaders to render it. The cloth is a grid of point masses connected by structural, shearing, and bending springs. Each step, we add up spring and external forces, update positions with damped Verlet integration, cap how far springs can stretch, and handle collisions with spheres, planes, and the cloth itself. For rendering, we wrote diffuse, Blinn-Phong, texture, bump, displacement, and mirror shaders, plus a custom Fresnel water shader for extra credit.
+			In this homework, we built a mass-spring cloth simulator and wrote GLSL shaders to render it. The cloth is a grid of point masses connected by structural, shearing, and bending springs. At each time step, we summed the spring and external forces, updated positions with damped Verlet integration, limited how far springs could stretch, and resolved collisions with spheres, planes, and the cloth itself. For rendering, we wrote diffuse, Blinn-Phong, texture, bump, displacement, and mirror shaders, plus a custom Fresnel water shader for extra credit.
 		</p>
 		<p>
-			The coolest part was watching the cloth go from a flat grid to something that really looked like fabric. Getting damping and the stretch limit right made a huge difference and helped the cloth look super natural, without bouncing too much or stretching too far.
+			The coolest part was watching the cloth go from a flat grid to something that actually looked like fabric. Getting damping and the stretch limit right made the biggest difference: once they were tuned, the cloth stopped bouncing too much or stretching too far.
 		</p>
 
 		<h2>Part 1: Masses and springs</h2>
 		<p>
-			I implemented <code>Cloth::buildGrid</code> by first placing the point masses in row-major order. For horizontal cloth, the masses vary across the <code>xz</code> plane with a constant <code>y = 1</code>. For vertical cloth, the masses vary across the <code>xy</code> plane with a small randomized <code>z</code> offset to avoid perfectly coincident starting positions. Each mass checks the scene's pinned index list so the appropriate corners remain fixed during simulation.
+			We implemented <code>Cloth::buildGrid</code> by first placing the point masses in row-major order. For horizontal cloth, we spread the masses across the <code>xz</code> plane at <code>y = 1</code>. For vertical cloth, we spread them across the <code>xy</code> plane with a small random <code>z</code> offset so no two masses started in exactly the same place. We marked a mass as pinned if its grid index appeared in the scene's pinned list, which kept the right corners fixed.
 		</p>
 		<p>
-			After all point masses are created, I add the three spring types. Structural springs connect each mass to its left and upper neighbors. Shearing springs connect diagonal upper-left and upper-right neighbors. Bending springs connect neighbors two grid positions away horizontally and vertically. Creating springs after the masses avoids invalid pointers into the <code>point_masses</code> vector.
+			After creating all the point masses, we added the three spring types. Structural springs connect each mass to its left and upper neighbors, shearing springs connect it to its upper-left and upper-right diagonal neighbors, and bending springs connect it to the masses two positions away horizontally and vertically. We created the springs only after all the masses existed, so the pointers into the <code>point_masses</code> vector stayed valid.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -80,13 +80,13 @@
 
 		<h2>Part 2: Simulation via numerical integration</h2>
 		<p>
-			I implemented <code>Cloth::simulate</code> by resetting every point mass's force accumulator at the start of each simulation step. I convert each external acceleration, such as gravity, into force using <code>F = ma</code>, then add those external forces to every point mass. For each enabled spring, I apply Hooke's law along the direction between its endpoint masses. Bending springs use a reduced spring constant, <code>0.2 * ks</code>, so they are weaker than structural and shearing springs.
+			At the start of each step in <code>Cloth::simulate</code>, we reset every point mass's force accumulator. We converted each external acceleration, such as gravity, into a force with <code>F = ma</code> and added it to every point mass. For each enabled spring, we applied Hooke's law along the line between its two endpoints. Bending springs used <code>0.2 * ks</code>, which made them weaker than structural and shearing springs.
 		</p>
 		<p>
-			Once forces are accumulated, I update unpinned point masses with damped Verlet integration. The previous position is stored in <code>last_position</code>, and the new position uses the current position, the damped displacement from the previous step, and the acceleration from the current forces. Pinned masses are skipped so their positions remain fixed. Finally, I enforce the Provot constraint by shortening any spring whose current length exceeds 110% of its rest length. If neither endpoint is pinned, both endpoints receive half of the correction; if one endpoint is pinned, the full correction goes to the unpinned endpoint.
+			Once forces were accumulated, we updated each unpinned point mass with damped Verlet integration. We computed the new position from the current position, the damped displacement since the previous step, and the acceleration from the current forces, and saved the old position in <code>last_position</code>. We skipped pinned masses so they stayed fixed. Finally, we enforced the Provot constraint by shortening any spring longer than 110% of its rest length. If neither endpoint was pinned, we moved each one by half the correction; if one was pinned, the unpinned endpoint took the full correction.
 		</p>
 		<p>
-			Lowering <code>ks</code> makes the cloth stretchier and more elastic, so it sags farther and takes on a looser shape before settling. Raising <code>ks</code> makes the springs resist deformation more strongly, so the cloth holds its shape better and appears stiffer. Increasing density makes each point mass heavier, so gravity has more inertia to move and the cloth tends to pull downward more strongly against the springs. Increasing damping removes energy faster, reducing oscillation and making the cloth settle more quickly; very low damping leaves more bouncing and swinging before rest.
+			Lowering <code>ks</code> made the cloth stretchier, so it sagged farther and took a looser shape before settling. Raising <code>ks</code> made the springs resist deformation more, so the cloth held its shape and looked stiffer. Increasing density made each point mass heavier, so the cloth pulled down harder against the springs. Increasing damping removed energy faster, so the cloth oscillated less and settled sooner; with very low damping, it kept bouncing and swinging for a while before coming to rest.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -115,10 +115,10 @@
 
 		<h2>Part 3: Handling collisions with other objects</h2>
 		<p>
-			For sphere collisions, I check whether the point mass's current position is inside the sphere by comparing its squared distance from the sphere origin against the squared radius. If the point mass is inside, I project it radially outward to the sphere surface to find the tangent point. I then compute the correction vector from the point mass's previous position to that tangent point, scale the correction by \(1 - f\), where \(f\) is the sphere friction, and set the new position to the previous position plus that scaled correction. This keeps colliding masses outside the sphere while letting friction reduce their sliding motion.
+			For sphere collisions, we checked whether a point mass was inside the sphere by comparing its squared distance from the center to the squared radius. If it was, we projected it outward onto the sphere's surface to get the tangent point. We then took the correction vector from the mass's previous position to that tangent point, scaled it by \(1 - f\), where \(f\) is the sphere's friction, and set the new position to the previous position plus the scaled correction. This kept masses outside the sphere, and friction slowed their sliding.
 		</p>
 		<p>
-			For plane collisions, I compare which side of the plane the point mass occupied before and after the time step. A sign change means the point mass crossed through the plane. In that case, I compute the intersection of the motion segment with the plane, offset that tangent point by the provided <code>SURFACE_OFFSET</code> on the side the point mass came from, and apply the friction-scaled correction from the previous position. Finally, in <code>Cloth::simulate</code>, every point mass is checked against every collision object after Verlet integration so both spheres and planes can constrain the cloth before the spring-length correction runs.
+			For plane collisions, we checked which side of the plane the point mass was on before and after the time step. If the side changed, the mass had passed through the plane. In that case, we found where its path crossed the plane, offset that point by <code>SURFACE_OFFSET</code> toward the side the mass came from, and applied the same friction-scaled correction from the previous position. In <code>Cloth::simulate</code>, we checked every point mass against every collision object after Verlet integration and before the spring-length correction.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -145,15 +145,15 @@
 			</table>
 		</div>
 		<p>
-			The sphere results show the expected stiffness trend. With <code>ks = 500</code>, the cloth deforms more and sinks around the sphere because the springs allow larger extension. With the default <code>ks = 5000</code>, the cloth still drapes naturally but keeps more of its shape. With <code>ks = 50000</code>, the cloth resists stretching strongly, so it stays tighter and forms a more rigid tent-like surface over the sphere.
+			The sphere results followed the expected stiffness trend. With <code>ks = 500</code>, the springs allowed more stretch, so the cloth deformed more and sank around the sphere. With the default <code>ks = 5000</code>, the cloth still draped naturally but kept more of its shape. With <code>ks = 50000</code>, the cloth barely stretched, so it stayed taut and formed a stiff tent over the sphere.
 		</p>
 
 		<h2>Part 4: Handling self-collisions</h2>
 		<p>
-			I implemented self-collision with spatial hashing. At the start of the self-collision stage, I rebuild a hash table from 3D grid-cell keys to the point masses inside those cells. The cell dimensions are based on the assignment's suggested values: \(3 * width / num\_width\_points\), \(3 * height / num\_height\_points\), and the larger of those two dimensions for thickness. This keeps the collision search local instead of comparing every point mass against every other point mass.
+			We implemented self-collision with spatial hashing. At the start of each self-collision pass, we rebuilt a hash table mapping 3D grid cells to the point masses inside them. We used the assignment's suggested cell size: \(3 * width / num\_width\_points\), \(3 * height / num\_height\_points\), and the larger of those two for the depth. That way, each point mass was compared only against nearby masses instead of every other mass in the cloth.
 		</p>
 		<p>
-			For each point mass, I look up the masses in the same hash cell and skip the point mass itself. If another point mass is closer than \(2 * thickness\), I compute a correction vector that moves the current mass just far enough away to satisfy that minimum separation. I average all such corrections and divide by the number of simulation steps before applying it, which avoids large sudden jumps during one frame.
+			For each point mass, we looked up the other masses in its cell, skipping the mass itself. If another mass was closer than \(2 * thickness\), we computed the correction that would push the current mass out to exactly that distance. We averaged these corrections and divided by the number of simulation steps before applying them, so the cloth didn't jump suddenly in a single frame.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -186,7 +186,7 @@
 			</table>
 		</div>
 		<p>
-			Changing density affects how heavy the cloth behaves as it falls. Lower density makes the cloth respond more lightly to the same forces, so the folds look less compressed. Increasing <code>ks</code> makes the springs resist deformation more strongly, so the cloth stretches less and tends to keep broader, stiffer folds. The default settings sit between those behaviors, producing pronounced folds that still flatten over time as the self-collision repulsion continues acting near the plane.
+			With lower density, the cloth responded more lightly to the same forces, so its folds looked less compressed. With higher <code>ks</code>, the cloth stretched less and kept broader, stiffer folds. The default settings landed between the two: the folds were pronounced but flattened over time as self-collision kept pushing the layers apart near the plane.
 		</p>
 
 		<h2>Part 5: Shaders</h2>
@@ -286,7 +286,7 @@
 
 		<h3>Extra credit: Fresnel water shader</h3>
 		<p>
-			For the custom shader, I blended the water texture with the environment reflection using Schlick's Fresnel approximation, \(F = F_0 + (1 - F_0)(1 - n \cdot v)^5\) with \(F_0 = 0.1\). Surfaces facing the camera mostly show the water texture, and surfaces at grazing angles become more reflective, like looking at real water from a shallow angle. I also added a specular highlight to make the surface look more reflective and wet.
+			For our custom shader, we blended the water texture with the environment reflection using Schlick's Fresnel approximation, \(F = F_0 + (1 - F_0)(1 - n \cdot v)^5\) with \(F_0 = 0.1\). Surfaces facing the camera mostly showed the water texture, while surfaces at grazing angles became more reflective, like real water seen from a shallow angle. We also added a specular highlight to make the surface look wet.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -306,7 +306,7 @@
 		<h2>(Optional) Part 6: Extra Credit - Additional cloth simulation features!</h2>
 		<h3>Wind</h3>
 		<p>
-			We added wind to the simulator. Each point mass gets a force along its normal based on how much of the wind hits that part of the cloth head-on, using the wind relative to the point's own velocity. Parts facing the wind catch more of it, and parts edge-on to it catch almost none. To make the wind vary across space, its speed is scaled by a gust factor that depends on each point's position and the elapsed time, so gusts move across the cloth instead of pushing it all evenly. We also added wind x, y, z and strength controls to the GUI.
+			We added wind to the simulator. We gave each point mass a force along its normal based on how directly the wind hit that part of the cloth, using the wind relative to the point's own velocity. Parts facing the wind caught more of it, and parts edge-on to it caught almost none. We scaled the wind's speed based on each point's position and the elapsed time, so that gusts looked like they moved across the cloth. We also added GUI controls for the wind's x, y, and z components and its strength.
 		</p>
 		<p>
 			With wind at (4, 4, 0) m/s and strength 80, the cloth's corners lifted and flared out. We left it running and watched the cloth get dragged more and more sideways until it fell!
@@ -334,7 +334,7 @@
 			<h2>AI Acknowledgement </h2>
 
 					<p>
-			  We used Claude  to explain concepts such as the TBN matrix, cube map reflections, and the difference between bump and displacement mapping, and to help debug code
+			  We used Claude to explain concepts such as the TBN matrix, cube map reflections, and the difference between bump and displacement mapping, and to help debug our code.
 		</p>
 		</div>
 	</body>
